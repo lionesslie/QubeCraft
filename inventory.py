@@ -1,0 +1,115 @@
+"""
+Yığın (stack) tabanlı envanter sistemi.
+
+Bir "stack" ya None'dur (boş slot) ya da [block_id, count] şeklinde bir liste
+(mutable, in-place güncellenebilsin diye tuple değil liste).
+
+Bu dosya pyglet'e bağımlı değildir; main.py mouse tıklamalarını buradaki
+yöntemlere (pick_up_or_place, vb.) çevirir. Böylece mantık pyglet kurulu
+olmayan bir ortamda bile test edilebilir.
+"""
+MAX_STACK = 64
+HOTBAR_SIZE = 9
+MAIN_ROWS = 3
+MAIN_COLS = 9
+MAIN_SIZE = MAIN_ROWS * MAIN_COLS
+
+
+class Inventory:
+    def __init__(self):
+        self.hotbar = [None] * HOTBAR_SIZE   # [block_id, count] ya da None
+        self.main = [None] * MAIN_SIZE
+        self.selected_hotbar = 0
+        self.cursor = None  # fare ile "elde tutulan" stack
+
+    # ---------- birleşik index yardımcıları (0..8 hotbar, 9..35 main) ----------
+
+    def _get(self, index):
+        if index < HOTBAR_SIZE:
+            return self.hotbar[index]
+        return self.main[index - HOTBAR_SIZE]
+
+    def _set(self, index, stack):
+        if index < HOTBAR_SIZE:
+            self.hotbar[index] = stack
+        else:
+            self.main[index - HOTBAR_SIZE] = stack
+
+    def total_slots(self):
+        return HOTBAR_SIZE + MAIN_SIZE
+
+    # ---------- envantere item ekleme (blok kırınca çağrılır) ----------
+
+    def add_item(self, block_id, count=1):
+        """Önce var olan aynı-tip yığınlara, sonra boş slotlara ekler.
+        Sığmayan miktarı döner (0 = hepsi sığdı)."""
+        remaining = count
+        n = self.total_slots()
+        for i in range(n):
+            if remaining <= 0:
+                break
+            stack = self._get(i)
+            if stack is not None and stack[0] == block_id and stack[1] < MAX_STACK:
+                can_add = min(MAX_STACK - stack[1], remaining)
+                stack[1] += can_add
+                remaining -= can_add
+        for i in range(n):
+            if remaining <= 0:
+                break
+            if self._get(i) is None:
+                add_now = min(MAX_STACK, remaining)
+                self._set(i, [block_id, add_now])
+                remaining -= add_now
+        return remaining
+
+    # ---------- hotbar'dan harcama (blok koyunca survival'da çağrılır) ----------
+
+    def take_from_hotbar(self, index, count=1):
+        stack = self.hotbar[index]
+        if stack is None or stack[1] < count:
+            return False
+        stack[1] -= count
+        if stack[1] <= 0:
+            self.hotbar[index] = None
+        return True
+
+    def selected_block(self):
+        stack = self.hotbar[self.selected_hotbar]
+        return stack[0] if stack else None
+
+    # ---------- fare ile slot etkileşimi (sol tık: al/koy/birleştir/takas) ----------
+
+    def click_slot(self, index):
+        """
+        Klasik Minecraft tarzı 'cursor' etkileşimi:
+          - Cursor boş, slot dolu  -> slotu cursor'a al
+          - Cursor dolu, slot boş  -> cursor'u slota bırak
+          - Cursor dolu, slot aynı tip -> mümkün olduğunca birleştir
+          - Cursor dolu, slot farklı tip -> takas et
+        """
+        slot = self._get(index)
+        if self.cursor is None:
+            if slot is not None:
+                self._set(index, None)
+                self.cursor = slot
+            return
+
+        if slot is None:
+            self._set(index, self.cursor)
+            self.cursor = None
+        elif slot[0] == self.cursor[0]:
+            can_add = min(MAX_STACK - slot[1], self.cursor[1])
+            slot[1] += can_add
+            self.cursor[1] -= can_add
+            if self.cursor[1] <= 0:
+                self.cursor = None
+        else:
+            self._set(index, self.cursor)
+            self.cursor = slot
+
+    def drop_cursor_into_inventory(self):
+        """Envanter kapatılırken elde tutulan stack varsa geri dağıt; sığmayan kaybolur."""
+        if self.cursor is None:
+            return
+        leftover = self.add_item(self.cursor[0], self.cursor[1])
+        self.cursor = None if leftover == 0 else [self.cursor[0], leftover]

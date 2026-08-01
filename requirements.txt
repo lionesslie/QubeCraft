@@ -1,0 +1,9 @@
+# Python 3.9 - 3.11 önerilir.
+# pyglet 1.5.x kasıtlı seçildi: eski (legacy/fixed-function) OpenGL context
+# ve basit vertex-list/Batch API'si sunuyor, bu da elle yazılmış OpenGL
+# render kodunu (glMatrixMode, glOrtho, vs.) çok daha güvenilir kılıyor.
+# pyglet 2.x farklı bir mimariye (shader zorunlu) geçtiği için kullanmadık.
+pyglet==1.5.29
+PyOpenGL==3.1.7
+numpy>=1.24
+Pillow>=10.0
