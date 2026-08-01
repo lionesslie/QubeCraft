@@ -1,4 +1,4 @@
-# PyCraft (v1) — Python + OpenGL Minecraft klonu
+# QubeCraft (v1) — Python + OpenGL
 
 ## Önemli not
 Bu proje burada (Claude'un sanal ortamı) **çalıştırılıp test edilemedi**:
