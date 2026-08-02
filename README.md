@@ -9,6 +9,8 @@ mesh üretimi, oyuncu fiziği/çarpışma, raycast) ayrı ayrı test edildi —
 ama render/pencere/girdi kısmını ilk açtığında küçük bir hata çıkarsa
 (ör. bir pyglet sürüm farkı) bana hatayı yapıştırırsan hemen düzeltirim.
 
+![QubeCraft Screenshot](Image/image.png)
+
 ## Kurulum
 ```bash
 python -m venv venv
