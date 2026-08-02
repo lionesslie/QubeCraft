@@ -1,14 +1,5 @@
 # QubeCraft (v1) — Python + OpenGL
 
-## Önemli not
-Bu proje burada (Claude'un sanal ortamı) **çalıştırılıp test edilemedi**:
-internet erişimi kapalı olduğu için `pyglet` kurulamadı, ayrıca ortamda
-ekran/görüntü çıkışı yok. Kod dikkatle, bilinen-doğru pyglet/OpenGL
-kalıpları kullanılarak yazıldı ve mantık kısımları (noise, dünya üretimi,
-mesh üretimi, oyuncu fiziği/çarpışma, raycast) ayrı ayrı test edildi —
-ama render/pencere/girdi kısmını ilk açtığında küçük bir hata çıkarsa
-(ör. bir pyglet sürüm farkı) bana hatayı yapıştırırsan hemen düzeltirim.
-
 ![QubeCraft Screenshot](Image/image.png)
 
 ## Kurulum
