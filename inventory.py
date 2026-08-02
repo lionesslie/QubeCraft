@@ -8,7 +8,8 @@ Bu dosya pyglet'e bağımlı değildir; main.py mouse tıklamalarını buradaki
 yöntemlere (pick_up_or_place, vb.) çevirir. Böylece mantık pyglet kurulu
 olmayan bir ortamda bile test edilebilir.
 """
-MAX_STACK = 64
+import items as I
+
 HOTBAR_SIZE = 9
 MAIN_ROWS = 3
 MAIN_COLS = 9
@@ -38,6 +39,12 @@ class Inventory:
     def total_slots(self):
         return HOTBAR_SIZE + MAIN_SIZE
 
+    def get_slot(self, index):
+        return self._get(index)
+
+    def set_slot(self, index, stack):
+        self._set(index, stack)
+
     # ---------- envantere item ekleme (blok kırınca çağrılır) ----------
 
     def add_item(self, block_id, count=1):
@@ -45,19 +52,20 @@ class Inventory:
         Sığmayan miktarı döner (0 = hepsi sığdı)."""
         remaining = count
         n = self.total_slots()
+        cap = I.stack_max(block_id)
         for i in range(n):
             if remaining <= 0:
                 break
             stack = self._get(i)
-            if stack is not None and stack[0] == block_id and stack[1] < MAX_STACK:
-                can_add = min(MAX_STACK - stack[1], remaining)
+            if stack is not None and stack[0] == block_id and stack[1] < cap:
+                can_add = min(cap - stack[1], remaining)
                 stack[1] += can_add
                 remaining -= can_add
         for i in range(n):
             if remaining <= 0:
                 break
             if self._get(i) is None:
-                add_now = min(MAX_STACK, remaining)
+                add_now = min(cap, remaining)
                 self._set(i, [block_id, add_now])
                 remaining -= add_now
         return remaining
@@ -98,7 +106,8 @@ class Inventory:
             self._set(index, self.cursor)
             self.cursor = None
         elif slot[0] == self.cursor[0]:
-            can_add = min(MAX_STACK - slot[1], self.cursor[1])
+            cap = I.stack_max(slot[0])
+            can_add = min(cap - slot[1], self.cursor[1])
             slot[1] += can_add
             self.cursor[1] -= can_add
             if self.cursor[1] <= 0:

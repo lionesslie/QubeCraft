@@ -99,9 +99,28 @@ class World:
                 if h <= SEA_LEVEL:
                     col[h:SEA_LEVEL + 1] = B.WATER
 
+        self._place_ores(chunk, heightmap, base_x, base_z)
         self._place_trees(chunk, heightmap)
         chunk.dirty = True
         return chunk
+
+    def _place_ores(self, chunk, heightmap, base_x, base_z):
+        """Taş bölgesine derinliğe göre kömür/demir/elmas cevheri serper.
+        Elmas en derinde ve en nadir, kömür sığ/orta derinlikte en yaygın."""
+        raw_seed = (self.seed * 486187739 + chunk.cx * 341873128712 + chunk.cz * 132897987541)
+        rng = np.random.default_rng(raw_seed & 0xFFFFFFFF)
+        for lx in range(CHUNK_SIZE):
+            for lz in range(CHUNK_SIZE):
+                h = int(heightmap[lx, lz])
+                stone_top = max(1, h - 4)
+                for y in range(1, stone_top):
+                    r = rng.random()
+                    if y <= 12 and r < 0.018:
+                        chunk.blocks[lx, y, lz] = B.DIAMOND_ORE
+                    elif y <= 28 and r < 0.03:
+                        chunk.blocks[lx, y, lz] = B.IRON_ORE
+                    elif r < 0.045:
+                        chunk.blocks[lx, y, lz] = B.COAL_ORE
 
     def _place_trees(self, chunk: Chunk, heightmap):
         raw_seed = self._tree_seed + chunk.cx * 341873128712 + chunk.cz * 132897987541

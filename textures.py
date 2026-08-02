@@ -14,6 +14,7 @@ TILE = 16
 TEXTURE_NAMES = [
     "grass_top", "grass_side", "dirt", "stone", "sand", "water",
     "wood_side", "wood_top", "leaves", "bedrock", "planks", "cobblestone",
+    "coal_ore", "iron_ore", "diamond_ore",
 ]
 
 
@@ -134,6 +135,40 @@ def make_cobblestone(rng):
     return _speckle(img, (120, 120, 120), [(100, 100, 100), (140, 140, 140), (90, 90, 90), (150, 150, 150)], 0.45, rng)
 
 
+def _ore_texture(rng, vein_colors, vein_density=0.16):
+    """Taş zemin üstüne renkli maden damarları serper (kömür/demir/elmas cevheri için ortak)."""
+    img = Image.new("RGB", (TILE, TILE))
+    px = img.load()
+    stone_base = [(128, 128, 128), (115, 115, 115), (140, 140, 140), (105, 105, 105)]
+    for x in range(TILE):
+        for y in range(TILE):
+            px[x, y] = rng.choice(stone_base)
+    # birbirine yakın 2x2/3x3 kümeler halinde damar noktaları koy (daha "cevher" gibi görünsün)
+    placed = 0
+    attempts = 0
+    while placed < int(TILE * TILE * vein_density) and attempts < 200:
+        attempts += 1
+        cx, cy = rng.randrange(TILE), rng.randrange(TILE)
+        for ddx, ddy in [(0, 0), (1, 0), (0, 1), (1, 1)]:
+            x, y = cx + ddx, cy + ddy
+            if 0 <= x < TILE and 0 <= y < TILE and rng.random() < 0.8:
+                px[x, y] = rng.choice(vein_colors)
+                placed += 1
+    return img
+
+
+def make_coal_ore(rng):
+    return _ore_texture(rng, [(25, 25, 25), (15, 15, 15), (35, 35, 35)])
+
+
+def make_iron_ore(rng):
+    return _ore_texture(rng, [(216, 175, 140), (198, 152, 116), (230, 190, 155)])
+
+
+def make_diamond_ore(rng):
+    return _ore_texture(rng, [(120, 235, 225), (90, 210, 200), (160, 245, 235)])
+
+
 def build_individual_textures(seed=1337, out_dir="assets"):
     """Her blok yüzü için ayrı bir PNG dosyası üretir (assets/<isim>.png)."""
     import os
@@ -144,6 +179,7 @@ def build_individual_textures(seed=1337, out_dir="assets"):
         "stone": make_stone, "sand": make_sand, "water": make_water,
         "wood_side": make_wood_side, "wood_top": make_wood_top, "leaves": make_leaves,
         "bedrock": make_bedrock, "planks": make_planks, "cobblestone": make_cobblestone,
+        "coal_ore": make_coal_ore, "iron_ore": make_iron_ore, "diamond_ore": make_diamond_ore,
     }
     paths = {}
     for name in TEXTURE_NAMES:

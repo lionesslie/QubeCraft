@@ -1,22 +1,27 @@
 """
-Python + Pyglet/OpenGL Minecraft klonu - v1 (temel sürüm)
+Python + Pyglet/OpenGL Minecraft klonu
 
 Bu sürümde var olanlar:
   - Seed'li noise ile prosedürel dünya (dağlar, ovalar, sahiller, su)
   - Chunk (16x16) tabanlı dünya, ağaçlar
+  - Yeraltı madenleri: kömür, demir, elmas (derinliğe göre dağılım)
   - Her blok yüzü için ayrı 16x16 piksel-art texture dosyası (paylaşılan atlas yok)
   - Birinci şahıs kamera, yürüme/koşma/zıplama (survival) ya da uçma (creative)
-  - Blok kırma / koyma
-  - Basit hotbar + envanter (survival'da blok toplama/harcama, creative'de sınırsız)
-  - Başlangıç menüsü: seed girme, oyun modu seçimi, görüş mesafesi
-  - Oyun içi duraklatma menüsü: dünya/oyuncu bilgisi ve ayarlar
+  - Blok kırma / koyma - survival'da alete göre değişen kazma HIZI
+    (kazma/balta/kılıç x tahta/taş/demir/elmas, 12 alet + doğru kategori/tier kontrolü)
+  - Can barı + açlık barı (nokta/kalp şeklinde), düşme hasarı, açlıktan hasar, respawn
+  - Tam envanter: hotbar (9) + ana grid (3x9), yığın sistemi, al/bırak/birleştir/takas
+  - Crafting: 14 tarif (tahta->çubuk, 4 tier x 3 alet türü), envanter ekranından craft
+  - Başlangıç menüsü: seed girme, oyun modu seçimi, görüş mesafesi (görsel panel)
+  - Oyun içi duraklatma menüsü: dünya/oyuncu bilgisi, can/açlık, ayarlar
 
-Henüz YOK (bir sonraki adımlarda eklenecek): crafting sistemi, combat/canlı
-düşmanlar, tam ızgara envanter arayüzü, chunk unload/kaydetme.
+Henüz YOK (bir sonraki adımlarda eklenecek): combat/canlı düşmanlar, ateş/pişirme
+(demir cevheri direkt "demir" düşürüyor, gerçek Minecraft'taki fırın/smelting yok),
+yiyecek/çiftçilik (açlık şu an sadece azalıyor, geri dolduracak yiyecek yok),
+dünya kaydetme/yükleme, chunk unload.
 
 Çalıştırmak için (kendi bilgisayarında):
     pip install -r requirements.txt
-    python textures.py     # (main.py zaten otomatik çağırıyor, elle gerekmez)
     python main.py
 """
 from __future__ import annotations
@@ -31,9 +36,11 @@ from pyglet import gl
 from pyglet.window import key, mouse
 
 import blocks as B
+import items as I
+import crafting as C
 from world import World, CHUNK_SIZE, SEA_LEVEL
 from mesh import build_chunk_mesh
-from player import Player
+from player import Player, MAX_HEALTH, MAX_HUNGER
 from inventory import Inventory, HOTBAR_SIZE, MAIN_ROWS, MAIN_COLS
 import textures as TEX
 
@@ -51,8 +58,30 @@ STATE_INVENTORY = "inventory"
 
 # ---------------------------------------------------------------- yardımcılar
 
-def make_hotbar_slot_rect(x, y, size=48):
-    return pyglet.shapes.Rectangle(x, y, size, size, color=(40, 40, 40))
+def _average_color(path):
+    """Bir PNG'nin ortalama rengini döner - hotbar/envanter ikonlarında kullanılır."""
+    from PIL import Image
+    img = Image.open(path).convert("RGB")
+    small = img.resize((1, 1))
+    return small.getpixel((0, 0))
+
+
+TOOL_TIER_COLOR = {
+    "wood": (156, 110, 66), "stone": (150, 150, 150),
+    "iron": (216, 216, 200), "diamond": (100, 220, 210),
+}
+
+
+def item_icon_color(game, item_id):
+    item = I.ITEMS.get(item_id)
+    if item is None:
+        return (200, 200, 200)
+    if item.tool_tier:
+        return TOOL_TIER_COLOR[item.tool_tier]
+    block_def = B.BLOCKS.get(item_id)
+    if block_def is not None:
+        return game.texture_colors.get(block_def.top, (200, 200, 200))
+    return (230, 230, 230)
 
 
 # ---------------------------------------------------------------- ana pencere
@@ -67,8 +96,11 @@ class Game(pyglet.window.Window):
         import os
         if not os.path.exists("assets/grass_top.png"):
             TEX.build_individual_textures()
-        self.textures = {}  # texture ismi -> pyglet Texture
+        self.textures = {}       # texture ismi -> pyglet Texture
+        self.texture_colors = {}  # texture ismi -> (r,g,b) ortalama renk (ikon rengi için)
         for name in TEX.TEXTURE_NAMES:
+            pil_avg = _average_color(f"assets/{name}.png")
+            self.texture_colors[name] = pil_avg
             img = pyglet.image.load(f"assets/{name}.png").get_texture()
             gl.glBindTexture(gl.GL_TEXTURE_2D, img.id)
             gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
@@ -91,7 +123,6 @@ class Game(pyglet.window.Window):
         self.menu_seed_text = ""
         self.menu_mode = "survival"
         self.menu_render_distance = DEFAULT_RENDER_DISTANCE
-        self._build_menu_labels()
 
         # --- oyun durumu (start_world çağrılınca doldurulur) ---
         self.world: World | None = None
@@ -106,24 +137,12 @@ class Game(pyglet.window.Window):
         self.fps_display = pyglet.window.FPSDisplay(self)
         self.debug_overlay = True
         self._mouse_pos = (WINDOW_W // 2, WINDOW_H // 2)
+        self.mouse_left_down = False
+        self.breaking = None  # {"pos": (x,y,z), "progress": 0..1, "total": saniye}
 
         pyglet.clock.schedule_interval(self.update, TICK_RATE)
 
     # ------------------------------------------------------------ menü UI
-
-    def _build_menu_labels(self):
-        cx, cy = WINDOW_W // 2, WINDOW_H // 2
-        self.menu_title = pyglet.text.Label(
-            "PyCraft", font_size=48, x=cx, y=cy + 180,
-            anchor_x="center", anchor_y="center", bold=True)
-        self.menu_lines = [
-            "Seed yazip ENTER'a basarak baslayin (bos birakirsaniz rastgele seed)",
-            "[C] Creative  /  [S] Survival  -  Simdiki mod: {mode}",
-            "[UP]/[DOWN] Gorus mesafesi (chunk): {rd}",
-            "Seed: {seed}",
-            "",
-            "ENTER: Dunyayi baslat",
-        ]
 
     def start_world(self):
         seed = int(self.menu_seed_text) if self.menu_seed_text.strip().isdigit() \
@@ -140,6 +159,8 @@ class Game(pyglet.window.Window):
         self.render_distance = self.menu_render_distance
         self.seed_used = seed
         self.state = STATE_PLAYING
+        self.mouse_left_down = False
+        self.breaking = None
         self.set_exclusive_mouse(True)
         self._queue_chunks_around_player()
 
@@ -226,6 +247,8 @@ class Game(pyglet.window.Window):
         if symbol == key.ESCAPE:
             if self.state == STATE_PLAYING:
                 self.state = STATE_PAUSED
+                self.mouse_left_down = False
+                self.breaking = None
                 self.set_exclusive_mouse(False)
             elif self.state == STATE_PAUSED:
                 self.state = STATE_PLAYING
@@ -237,6 +260,8 @@ class Game(pyglet.window.Window):
         if symbol == key.E:
             if self.state == STATE_PLAYING:
                 self.state = STATE_INVENTORY
+                self.mouse_left_down = False
+                self.breaking = None
                 self.set_exclusive_mouse(False)
             elif self.state == STATE_INVENTORY:
                 self._close_inventory()
@@ -297,18 +322,68 @@ class Game(pyglet.window.Window):
             return
         if self.state != STATE_PLAYING:
             return
-        hit = self.player.raycast(self.world, max_distance=6.0)
-        if hit is None:
-            return
-        block_pos, place_pos = hit
 
         if button == mouse.LEFT:
-            self._break_block(block_pos)
+            self.mouse_left_down = True
+            if self.player.mode == "creative":
+                hit = self.player.raycast(self.world, max_distance=6.0)
+                if hit is not None:
+                    self._break_block_instant(hit[0])
         elif button == mouse.RIGHT:
-            self._place_block(place_pos)
+            hit = self.player.raycast(self.world, max_distance=6.0)
+            if hit is not None:
+                self._place_block(hit[1])
+
+    def on_mouse_release(self, x, y, button, modifiers):
+        if button == mouse.LEFT:
+            self.mouse_left_down = False
+            self.breaking = None
+
+    def _update_mining(self, dt):
+        """Survival'da sol tık basılıysa kırma ilerlemesini işler (aletle hız değişir)."""
+        if self.player.mode != "survival" or not self.mouse_left_down:
+            self.breaking = None
+            return
+        hit = self.player.raycast(self.world, max_distance=6.0)
+        if hit is None:
+            self.breaking = None
+            return
+        pos, _ = hit
+        block_id = self.world.get_block(*pos)
+        block_def = B.BLOCKS[block_id]
+        if not block_def.breakable:
+            self.breaking = None
+            return
+
+        held_item = self.inventory.selected_block()
+        total = I.mining_seconds(block_id, held_item)
+
+        if self.breaking is None or self.breaking["pos"] != pos:
+            self.breaking = {"pos": pos, "progress": 0.0, "total": total}
+        else:
+            self.breaking["progress"] += dt / max(0.05, total)
+            if self.breaking["progress"] >= 1.0:
+                self._break_block_survival(pos, held_item)
+                self.breaking = None
+
+    def _break_block_instant(self, pos):
+        """Creative: alet/hız umursanmadan anında kırar, envantere hiçbir şey eklemez."""
+        bx, by, bz = pos
+        block_def = B.BLOCKS[self.world.get_block(bx, by, bz)]
+        if not block_def.breakable:
+            return
+        self.world.set_block(bx, by, bz, B.AIR)
+
+    def _break_block_survival(self, pos, held_item):
+        bx, by, bz = pos
+        block_id = self.world.get_block(bx, by, bz)
+        self.world.set_block(bx, by, bz, B.AIR)
+        drop_id, drop_count = I.get_drop(block_id, held_item)
+        if drop_id is not None and drop_count > 0:
+            self.inventory.add_item(drop_id, drop_count)
 
     def _handle_inventory_click(self, mx, my):
-        hotbar_rects, main_rects, palette_rects = self._inventory_layout()
+        hotbar_rects, main_rects, palette_rects, recipe_rects = self._inventory_layout()
         for index, rx, ry, size in hotbar_rects + main_rects:
             if rx <= mx <= rx + size and ry <= my <= ry + size:
                 self.inventory.click_slot(index)
@@ -320,22 +395,16 @@ class Game(pyglet.window.Window):
                     # üzerine yeni, dolu bir yığın alınır.
                     self.inventory.cursor = [block_id, CREATIVE_STACK]
                     return
-
-    def _break_block(self, pos):
-        bx, by, bz = pos
-        block_id = self.world.get_block(bx, by, bz)
-        block_def = B.BLOCKS[block_id]
-        if not block_def.breakable:
-            return
-        self.world.set_block(bx, by, bz, B.AIR)
-        if self.player.mode == "survival":
-            self.inventory.add_item(block_id, 1)
+        for idx, rx, ry, rw, rh in recipe_rects:
+            if rx <= mx <= rx + rw and ry <= my <= ry + rh:
+                C.craft(self.inventory, C.RECIPES[idx])
+                return
 
     def _place_block(self, pos):
         bx, by, bz = pos
         selected = self.inventory.selected_block()
-        if selected is None:
-            return
+        if selected is None or selected not in B.PLACEABLE:
+            return  # alet ya da yerleştirilemeyen bir item seçili
         # oyuncunun kendi bulunduğu hücreye blok koymayı engelle
         px, py, pz = math.floor(self.player.x), math.floor(self.player.y), math.floor(self.player.z)
         py2 = math.floor(self.player.y + 1.0)
@@ -362,6 +431,7 @@ class Game(pyglet.window.Window):
             "sprint": key.LCTRL in self.keys_down,
         }
         self.player.update(dt, action_state, self.world)
+        self._update_mining(dt)
         self._queue_chunks_around_player()
         self._process_pending_chunks()
         self._rebuild_dirty_chunks()
@@ -467,43 +537,68 @@ class Game(pyglet.window.Window):
         gl.glVertex2f(cx, cy + 8)
         gl.glEnd()
 
-        # hotbar
-        slot_size = 44
+        # kazma ilerleme çubuğu (crosshair'in hemen altında)
+        if self.breaking is not None:
+            prog = min(1.0, self.breaking["progress"])
+            bw = 60
+            pyglet.shapes.Rectangle(cx - bw // 2, cy - 26, bw, 6, color=(40, 40, 40)).draw()
+            pyglet.shapes.Rectangle(cx - bw // 2, cy - 26, max(1, int(bw * prog)), 6,
+                                     color=(255, 210, 60)).draw()
+
+        slot_size = 46
         total_w = slot_size * HOTBAR_SIZE
         start_x = width // 2 - total_w // 2
+        bar_bottom = 14
+
+        # can (kirmizi noktalar) ve aclik (turuncu noktalar) - hotbar'in hemen ustunde
+        p = self.player
+        dots_y = bar_bottom + slot_size + 14
+        self._draw_point_bar(width // 2 - 100, dots_y, p.health, MAX_HEALTH, (220, 40, 40))
+        self._draw_point_bar(width // 2 + 12, dots_y, p.hunger, MAX_HUNGER, (230, 150, 40))
+
+        # hotbar arka plan paneli
+        panel = pyglet.shapes.Rectangle(start_x - 6, bar_bottom - 6, total_w + 12, slot_size + 12,
+                                         color=(15, 15, 15))
+        panel.opacity = 150
+        panel.draw()
+
         for i in range(HOTBAR_SIZE):
             x = start_x + i * slot_size
-            border = (255, 255, 0) if i == self.inventory.selected_hotbar else (30, 30, 30)
-            bg = pyglet.shapes.BorderedRectangle(
-                x, 10, slot_size - 4, slot_size - 4, border=3,
-                color=(70, 70, 70), border_color=border)
-            bg.draw()
-            stack = self.inventory.hotbar[i]
-            if stack is not None:
-                name = B.BLOCKS[stack[0]].name
-                count = "*" if self.player.mode == "creative" else str(stack[1])
-                pyglet.text.Label(f"{name[:4]}\n{count}", font_size=8, x=x + slot_size // 2, y=10 + slot_size // 2,
-                                   anchor_x="center", anchor_y="center", multiline=True, width=slot_size,
-                                   align="center", color=(255, 255, 255, 255)).draw()
+            self._draw_slot(x, bar_bottom, slot_size - 4, self.inventory.hotbar[i],
+                             highlight=(i == self.inventory.selected_hotbar), key_label=str(i + 1))
 
         if self.debug_overlay:
             self.fps_display.draw()
-            p = self.player
             info = (f"seed={self.seed_used}  mod={p.mode}  x={p.x:.1f} y={p.y:.1f} z={p.z:.1f}  "
                     f"yaw={p.yaw:.0f} pitch={p.pitch:.0f}  yuklu_chunk={len(self.loaded_chunks)}  "
                     f"gorus_mesafesi={self.render_distance}")
             pyglet.text.Label(info, font_size=11, x=10, y=height - 20,
                                color=(255, 255, 255, 255)).draw()
-            pyglet.text.Label("ESC: duraklat/menu  E: envanter  F3: debug  Sol tik: kir  Sag tik: koy  Tekerlek/1-9: blok sec",
+            pyglet.text.Label("ESC: duraklat/menu  E: envanter  F3: debug  Sol tik: kir(basili tut)  Sag tik: koy  Tekerlek/1-9: sec",
                                font_size=11, x=10, y=height - 40, color=(255, 255, 0, 255)).draw()
+
+    def _draw_point_bar(self, x, y, value, max_value, color, radius=7, gap=16):
+        """'Nokta şeklinde' can/açlık barı: her nokta 2 birimi temsil eder (10 nokta)."""
+        n = max_value // 2
+        for i in range(n):
+            point_value = (i + 1) * 2
+            cx_dot = x + i * gap
+            if value >= point_value:
+                fill = color
+            elif value >= point_value - 1:
+                fill = tuple(c // 2 + 40 for c in color)  # yarım nokta
+            else:
+                fill = (60, 60, 60)
+            pyglet.shapes.Circle(cx_dot, y, radius, color=fill).draw()
 
     def _inventory_layout(self):
         """
         Envanter slotlarının ekran koordinatlarını hesaplar. Hem çizim hem de
         tıklama testi AYNI bu fonksiyonu kullanır, böylece ikisi asla birbirinden
-        sapmaz. Döner: (hotbar_rects, main_rects, palette_rects)
+        sapmaz. Döner: (hotbar_rects, main_rects, palette_rects, recipe_rects)
           hotbar_rects / main_rects: [(slot_index, x, y, size), ...]
           palette_rects:             [(block_id, x, y, size), ...]
+          recipe_rects:              [(recipe_index, x, y, w, h), ...]
         """
         width, height = self.get_size()
         size = 44
@@ -534,18 +629,41 @@ class Game(pyglet.window.Window):
             for i, block_id in enumerate(B.PLACEABLE):
                 palette_rects.append((block_id, px0 + i * (size + gap), palette_y, size))
 
-        return hotbar_rects, main_rects, palette_rects
+        # crafting tarif listesi: ekranın sağında dikey bir sütun
+        recipe_h = 30
+        recipe_w = 230
+        rx0 = width - recipe_w - 20
+        ry0 = height - 90
+        recipe_rects = []
+        for i, recipe in enumerate(C.RECIPES):
+            recipe_rects.append((i, rx0, ry0 - i * (recipe_h + 4), recipe_w, recipe_h))
 
-    def _draw_slot(self, x, y, size, stack, highlight=False):
-        border = (255, 255, 0) if highlight else (90, 90, 90)
+        return hotbar_rects, main_rects, palette_rects, recipe_rects
+
+    def _draw_slot(self, x, y, size, stack, highlight=False, key_label=None):
+        border = (255, 220, 40) if highlight else (95, 95, 95)
         pyglet.shapes.BorderedRectangle(x, y, size, size, border=2,
-                                         color=(60, 60, 60), border_color=border).draw()
+                                         color=(58, 58, 58), border_color=border).draw()
         if stack is not None:
-            name = B.BLOCKS[stack[0]].name
-            count = "*" if (self.player.mode == "creative") else str(stack[1])
-            pyglet.text.Label(f"{name[:5]}\n{count}", font_size=8, x=x + size // 2, y=y + size // 2,
-                               anchor_x="center", anchor_y="center", multiline=True, width=size,
-                               align="center", color=(255, 255, 255, 255)).draw()
+            item_id, count = stack
+            icon_color = item_icon_color(self, item_id)
+            pad = 6
+            pyglet.shapes.Rectangle(x + pad, y + pad, size - pad * 2, size - pad * 2,
+                                     color=icon_color).draw()
+            label_text = I.short_label(item_id)
+            pyglet.text.Label(label_text, font_size=8, x=x + size // 2, y=y + size - 9,
+                               anchor_x="center", anchor_y="center",
+                               color=(255, 255, 255, 255)).draw()
+            if self.player is not None and self.player.mode == "creative" and I.stack_max(item_id) > 1:
+                count_text = "*"
+            else:
+                count_text = str(count)
+            pyglet.text.Label(count_text, font_size=10, x=x + size - 6, y=y + 6,
+                               anchor_x="right", anchor_y="bottom", bold=True,
+                               color=(255, 255, 255, 255)).draw()
+        if key_label is not None:
+            pyglet.text.Label(key_label, font_size=8, x=x + 3, y=y + size - 2,
+                               anchor_x="left", anchor_y="top", color=(210, 210, 210, 255)).draw()
 
     def _draw_inventory_screen(self):
         width, height = self.get_size()
@@ -553,7 +671,7 @@ class Game(pyglet.window.Window):
         overlay.opacity = 170
         overlay.draw()
 
-        hotbar_rects, main_rects, palette_rects = self._inventory_layout()
+        hotbar_rects, main_rects, palette_rects, recipe_rects = self._inventory_layout()
 
         pyglet.text.Label("Envanter  -  [E]/[ESC] kapat, sol tik: al / birak / birlestir / takas et",
                            font_size=14, x=width // 2, y=height - 40,
@@ -573,10 +691,31 @@ class Game(pyglet.window.Window):
             for block_id, x, y, size in palette_rects:
                 self._draw_slot(x, y, size, [block_id, CREATIVE_STACK])
 
+        self._draw_crafting_panel(recipe_rects)
+
         # elde tutulan (cursor) stack, fare imlecini takip eder
         if self.inventory.cursor is not None:
             mx, my = self._mouse_pos
             self._draw_slot(mx - 22, my - 22, 44, self.inventory.cursor)
+
+    def _draw_crafting_panel(self, recipe_rects):
+        if not recipe_rects:
+            return
+        first_x, first_y = recipe_rects[0][1], recipe_rects[0][2]
+        pyglet.text.Label("Crafting", font_size=15, x=first_x, y=first_y + 34,
+                           anchor_x="left", color=(255, 255, 255, 255), bold=True).draw()
+        for idx, x, y, w, h in recipe_rects:
+            recipe = C.RECIPES[idx]
+            name, ingredients, out_id, out_count = recipe
+            craftable = C.can_craft(self.inventory, recipe)
+            bg = (46, 90, 46) if craftable else (50, 50, 50)
+            border = (120, 220, 120) if craftable else (90, 90, 90)
+            pyglet.shapes.BorderedRectangle(x, y, w, h, border=2, color=bg, border_color=border).draw()
+            need_text = " + ".join(f"{n}x{I.short_label(iid)}" for iid, n in ingredients.items())
+            text = f"{name} ({need_text}) -> {out_count}x{I.short_label(out_id)}"
+            pyglet.text.Label(text, font_size=9, x=x + 6, y=y + h // 2,
+                               anchor_x="left", anchor_y="center",
+                               color=(255, 255, 255, 255)).draw()
 
     def _draw_pause_menu(self):
         width, height = self.get_size()
@@ -589,6 +728,7 @@ class Game(pyglet.window.Window):
             f"Dunya: {self.world_name}   Seed: {self.seed_used}",
             f"Oyun modu: {p.mode}   [G] ile degistir",
             f"Konum: x={p.x:.1f} y={p.y:.1f} z={p.z:.1f}",
+            f"Can: {p.health:.0f}/{MAX_HEALTH}   Aclik: {p.hunger:.0f}/{MAX_HUNGER}",
             f"Gorus mesafesi: {self.render_distance} chunk   [+/-] ile degistir",
             f"Fare hassasiyeti: {self.mouse_sensitivity:.2f}",
             "",
@@ -602,16 +742,63 @@ class Game(pyglet.window.Window):
 
     def _draw_menu(self):
         self.set_2d()
-        self.menu_title.draw()
         width, height = self.get_size()
+        cx, cy = width // 2, height // 2
+
+        # gökyüzü zaten temizlenmiş arka plan; üstüne dekoratif bir zemin şeridi çiz
+        pyglet.shapes.Rectangle(0, 0, width, height // 3, color=(70, 130, 60)).draw()
+
+        pyglet.text.Label("PyCraft", font_size=52, x=cx, y=height - 90,
+                           anchor_x="center", anchor_y="center", bold=True,
+                           color=(255, 255, 255, 255)).draw()
+        pyglet.text.Label("Python + OpenGL", font_size=13, x=cx, y=height - 130,
+                           anchor_x="center", anchor_y="center",
+                           color=(230, 230, 230, 255)).draw()
+
+        panel_w, panel_h = 480, 300
+        panel = pyglet.shapes.BorderedRectangle(cx - panel_w // 2, cy - panel_h // 2 + 20,
+                                                  panel_w, panel_h, border=3,
+                                                  color=(30, 30, 30), border_color=(255, 255, 255))
+        panel.opacity = 210
+        panel.draw()
+
         seed_show = self.menu_seed_text if self.menu_seed_text else "(rastgele)"
-        text_vals = {"mode": self.menu_mode, "rd": self.menu_render_distance, "seed": seed_show}
-        y = height // 2 + 60
-        for template in self.menu_lines:
-            line = template.format(**text_vals)
-            pyglet.text.Label(line, font_size=15, x=width // 2, y=y,
-                               anchor_x="center", color=(255, 255, 255, 255)).draw()
-            y -= 30
+        y = cy + panel_h // 2 - 10
+        pyglet.text.Label("Seed:", font_size=13, x=cx - panel_w // 2 + 24, y=y,
+                           anchor_x="left", color=(200, 200, 200, 255)).draw()
+        seed_box = pyglet.shapes.BorderedRectangle(cx - 60, y - 32, 220, 30, border=2,
+                                                     color=(50, 50, 50), border_color=(150, 150, 150))
+        seed_box.draw()
+        pyglet.text.Label(seed_show, font_size=13, x=cx - 50, y=y - 17,
+                           anchor_x="left", anchor_y="center", color=(255, 255, 0, 255)).draw()
+        pyglet.text.Label("(rakam yaz, Backspace ile sil)", font_size=10, x=cx + 170, y=y - 17,
+                           anchor_x="left", anchor_y="center", color=(180, 180, 180, 255)).draw()
+
+        y -= 60
+        pyglet.text.Label("Oyun modu:", font_size=13, x=cx - panel_w // 2 + 24, y=y,
+                           anchor_x="left", color=(200, 200, 200, 255)).draw()
+        for i, (mode_id, mode_label) in enumerate([("survival", "[S] Survival"), ("creative", "[C] Creative")]):
+            bx = cx - 40 + i * 150
+            active = self.menu_mode == mode_id
+            box = pyglet.shapes.BorderedRectangle(bx, y - 26, 130, 30, border=2,
+                                                    color=(60, 110, 60) if active else (50, 50, 50),
+                                                    border_color=(255, 255, 0) if active else (120, 120, 120))
+            box.draw()
+            pyglet.text.Label(mode_label, font_size=12, x=bx + 65, y=y - 11,
+                               anchor_x="center", anchor_y="center", color=(255, 255, 255, 255)).draw()
+
+        y -= 60
+        pyglet.text.Label(f"Gorus mesafesi:  [UP]/[DOWN]   <  {self.menu_render_distance} chunk  >",
+                           font_size=13, x=cx - panel_w // 2 + 24, y=y,
+                           anchor_x="left", color=(200, 200, 200, 255)).draw()
+
+        y -= 70
+        start_btn = pyglet.shapes.BorderedRectangle(cx - 100, y - 34, 200, 40, border=3,
+                                                      color=(60, 140, 60), border_color=(255, 255, 255))
+        start_btn.draw()
+        pyglet.text.Label("ENTER: Baslat", font_size=15, x=cx, y=y - 14,
+                           anchor_x="center", anchor_y="center", bold=True,
+                           color=(255, 255, 255, 255)).draw()
 
 
 def main():

@@ -13,6 +13,9 @@ LEAVES = 7
 BEDROCK = 8
 PLANKS = 9
 COBBLESTONE = 10
+COAL_ORE = 11
+IRON_ORE = 12
+DIAMOND_ORE = 13
 
 
 class BlockDef:
@@ -42,7 +45,21 @@ BLOCKS = {
     BEDROCK: BlockDef(BEDROCK, "bedrock", "bedrock", breakable=False),
     PLANKS: BlockDef(PLANKS, "planks", "planks"),
     COBBLESTONE: BlockDef(COBBLESTONE, "cobblestone", "cobblestone"),
+    COAL_ORE: BlockDef(COAL_ORE, "coal_ore", "coal_ore"),
+    IRON_ORE: BlockDef(IRON_ORE, "iron_ore", "iron_ore"),
+    DIAMOND_ORE: BlockDef(DIAMOND_ORE, "diamond_ore", "diamond_ore"),
 }
 
 # Oyuncunun elle koyabileceği bloklar (hotbar / creative envanteri için sıralı liste)
-PLACEABLE = [GRASS, DIRT, STONE, SAND, WOOD, LEAVES, PLANKS, COBBLESTONE]
+PLACEABLE = [GRASS, DIRT, STONE, SAND, WOOD, LEAVES, PLANKS, COBBLESTONE,
+             COAL_ORE, IRON_ORE, DIAMOND_ORE]
+
+# Blok kırılınca envantere hangi item'ın düşeceği (belirtilmeyenler kendi id'sini düşürür).
+# Gerçek Minecraft'taki gibi: TAŞ kırınca MOLOZ TAŞI (cobblestone) düşer.
+# Cevherler ise item modülündeki ham madenleri (kömür/demir/elmas) düşürür - bunlar
+# items.py'de tanımlı, burada blocks.py'nin items.py'ye bağımlı olmaması için
+# sadece işaretçi olarak orion (ore) blok id'lerini bırakıyoruz; gerçek eşleme
+# main.py'de items.ORE_DROPS ile yapılıyor.
+BREAK_DROPS = {
+    STONE: COBBLESTONE,
+}

@@ -19,6 +19,12 @@ PLAYER_HEIGHT = 1.8
 EYE_HEIGHT = 1.62
 TERMINAL_VELOCITY = -40.0
 
+MAX_HEALTH = 20        # 10 "can noktası" x 2
+MAX_HUNGER = 20         # 10 "açlık noktası" x 2
+FALL_DAMAGE_FREE_BLOCKS = 3.0     # bu kadar bloktan düşme hasarsız
+HUNGER_DRAIN_PER_SECOND = 20.0 / (60.0 * 10.0)   # 10 dakikada 20 açlık puanı biter
+STARVATION_DAMAGE_PER_SECOND = 20.0 / 30.0        # açlık bitince 30 saniyede öldürür
+
 
 class Player:
     def __init__(self, world: World, x=0.0, z=0.0, mode="survival"):
@@ -30,6 +36,10 @@ class Player:
         self.on_ground = False
         self.mode = mode           # "survival" ya da "creative"
         self.flying = (mode == "creative")
+        self.health = MAX_HEALTH
+        self.hunger = MAX_HUNGER
+        self._fall_start_y = y
+        self._spawn_x, self._spawn_z = float(x), float(z)
 
     # ---------- bakış ----------
 
@@ -60,6 +70,14 @@ class Player:
         """
         action_state: {"forward","back","left","right","jump","sneak_down","sprint"} -> bool
         """
+        if self.mode == "survival":
+            self._update_hunger(dt, action_state)
+
+        if self.on_ground:
+            self._fall_start_y = self.y
+        elif not self.flying:
+            self._fall_start_y = max(self._fall_start_y, self.y)
+
         yaw_r = math.radians(self.yaw)
         forward_x, forward_z = math.sin(yaw_r), -math.cos(yaw_r)
         right_x, right_z = math.cos(yaw_r), math.sin(yaw_r)
@@ -100,6 +118,32 @@ class Player:
 
         self._move_with_collision(dx, dy, dz, world)
 
+    def _update_hunger(self, dt, action_state):
+        if self.hunger > 0:
+            drain = HUNGER_DRAIN_PER_SECOND
+            if action_state.get("sprint"):
+                drain *= 1.5
+            self.hunger = max(0.0, self.hunger - drain * dt)
+        else:
+            self.take_damage(STARVATION_DAMAGE_PER_SECOND * dt)
+
+    def take_damage(self, amount):
+        if self.mode != "survival" or amount <= 0:
+            return
+        self.health = max(0.0, self.health - amount)
+        if self.health <= 0:
+            self.respawn()
+
+    def eat(self, hunger_restore=4.0):
+        self.hunger = min(MAX_HUNGER, self.hunger + hunger_restore)
+
+    def respawn(self):
+        self.x, self.z = self._spawn_x, self._spawn_z
+        self.y = self._fall_start_y  # yaklaşık; main.py isterse world.spawn_height ile daha iyi ayarlayabilir
+        self.vy = 0.0
+        self.health = MAX_HEALTH
+        self.hunger = MAX_HUNGER
+
     def _aabb_blocked(self, world, x, y, z):
         """Verilen konumda oyuncunun AABB'si içinde katı blok var mı?"""
         half = PLAYER_WIDTH / 2
@@ -118,11 +162,16 @@ class Player:
         # (basit ama etkili "sweep" yaklaşımı, voxel oyunlarında yaygın).
         if not self._aabb_blocked(world, self.x + dx, self.y, self.z):
             self.x += dx
+        was_on_ground = self.on_ground
         if not self._aabb_blocked(world, self.x, self.y + dy, self.z):
             self.y += dy
             self.on_ground = False
         else:
             if dy < 0:
+                if not was_on_ground:
+                    fall_dist = self._fall_start_y - self.y
+                    if fall_dist > FALL_DAMAGE_FREE_BLOCKS:
+                        self.take_damage(fall_dist - FALL_DAMAGE_FREE_BLOCKS)
                 self.on_ground = True
             self.vy = 0.0
         if not self._aabb_blocked(world, self.x, self.y, self.z + dz):
