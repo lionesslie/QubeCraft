@@ -16,6 +16,7 @@ COBBLESTONE = 10
 COAL_ORE = 11
 IRON_ORE = 12
 DIAMOND_ORE = 13
+CRAFTING_TABLE = 14
 
 
 class BlockDef:
@@ -48,11 +49,13 @@ BLOCKS = {
     COAL_ORE: BlockDef(COAL_ORE, "coal_ore", "coal_ore"),
     IRON_ORE: BlockDef(IRON_ORE, "iron_ore", "iron_ore"),
     DIAMOND_ORE: BlockDef(DIAMOND_ORE, "diamond_ore", "diamond_ore"),
+    CRAFTING_TABLE: BlockDef(CRAFTING_TABLE, "crafting_table", "crafting_table_top",
+                              "crafting_table_side", "planks"),
 }
 
 # Oyuncunun elle koyabileceği bloklar (hotbar / creative envanteri için sıralı liste)
 PLACEABLE = [GRASS, DIRT, STONE, SAND, WOOD, LEAVES, PLANKS, COBBLESTONE,
-             COAL_ORE, IRON_ORE, DIAMOND_ORE]
+             COAL_ORE, IRON_ORE, DIAMOND_ORE, CRAFTING_TABLE]
 
 # Blok kırılınca envantere hangi item'ın düşeceği (belirtilmeyenler kendi id'sini düşürür).
 # Gerçek Minecraft'taki gibi: TAŞ kırınca MOLOZ TAŞI (cobblestone) düşer.

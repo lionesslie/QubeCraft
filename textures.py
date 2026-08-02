@@ -14,7 +14,7 @@ TILE = 16
 TEXTURE_NAMES = [
     "grass_top", "grass_side", "dirt", "stone", "sand", "water",
     "wood_side", "wood_top", "leaves", "bedrock", "planks", "cobblestone",
-    "coal_ore", "iron_ore", "diamond_ore",
+    "coal_ore", "iron_ore", "diamond_ore", "crafting_table_top", "crafting_table_side",
 ]
 
 
@@ -169,6 +169,81 @@ def make_diamond_ore(rng):
     return _ore_texture(rng, [(120, 235, 225), (90, 210, 200), (160, 245, 235)])
 
 
+def make_crafting_table_top(rng):
+    img = make_planks(rng)
+    px = img.load()
+    # basit bir "kesim çizgisi" ızgarası: ortadan çapraz bölünmüş iki üçgen görünümü
+    grid_color = (70, 48, 28)
+    for i in range(TILE):
+        px[i, TILE // 2] = grid_color
+        px[TILE // 2, i] = grid_color
+    for i in range(0, TILE, 3):
+        px[i, i] = (170, 130, 80)
+    return img
+
+
+def make_crafting_table_side(rng):
+    img = make_planks(rng)
+    px = img.load()
+    border = (60, 42, 24)
+    for i in range(TILE):
+        px[i, 0] = border
+        px[i, TILE - 1] = border
+        px[0, i] = border
+        px[TILE - 1, i] = border
+    return img
+
+
+HANDLE_COLOR = (120, 85, 52)
+
+TOOL_TIER_COLOR = {
+    "wood": (156, 110, 66), "stone": (150, 150, 150),
+    "iron": (222, 222, 210), "diamond": (100, 220, 210),
+}
+
+
+def _blank(size=TILE):
+    return Image.new("RGBA", (size, size), (0, 0, 0, 0))
+
+
+def _line(px, x0, y0, x1, y1, color):
+    """Basit Bresenham benzeri kalın çizgi (piksel-art alet siluetleri için)."""
+    steps = max(abs(x1 - x0), abs(y1 - y0), 1)
+    for i in range(steps + 1):
+        t = i / steps
+        x = round(x0 + (x1 - x0) * t)
+        y = round(y0 + (y1 - y0) * t)
+        for dx in (-1, 0):
+            for dy in (-1, 0):
+                xx, yy = x + dx, y + dy
+                if 0 <= xx < TILE and 0 <= yy < TILE:
+                    px[xx, yy] = color
+
+
+def make_tool_icon(kind, tier):
+    """Kazma/balta/kılıç için basit piksel-art ikon üretir (hotbar/envanter ikonu)."""
+    img = _blank()
+    px = img.load()
+    head_color = TOOL_TIER_COLOR[tier]
+    if kind == "pickaxe":
+        _line(px, 3, 3, 12, 3, head_color)
+        _line(px, 3, 3, 6, 6, head_color)
+        _line(px, 12, 3, 9, 6, head_color)
+        _line(px, 7, 6, 13, 12, HANDLE_COLOR)
+    elif kind == "axe":
+        _line(px, 9, 2, 13, 5, head_color)
+        _line(px, 13, 5, 10, 9, head_color)
+        _line(px, 9, 2, 6, 6, head_color)
+        _line(px, 6, 6, 10, 9, head_color)
+        _line(px, 9, 5, 3, 13, HANDLE_COLOR)
+    else:  # sword
+        _line(px, 8, 1, 8, 9, head_color)
+        _line(px, 6, 3, 10, 3, head_color)
+        _line(px, 5, 9, 11, 9, HANDLE_COLOR)
+        _line(px, 8, 9, 8, 14, HANDLE_COLOR)
+    return img
+
+
 def build_individual_textures(seed=1337, out_dir="assets"):
     """Her blok yüzü için ayrı bir PNG dosyası üretir (assets/<isim>.png)."""
     import os
@@ -180,6 +255,7 @@ def build_individual_textures(seed=1337, out_dir="assets"):
         "wood_side": make_wood_side, "wood_top": make_wood_top, "leaves": make_leaves,
         "bedrock": make_bedrock, "planks": make_planks, "cobblestone": make_cobblestone,
         "coal_ore": make_coal_ore, "iron_ore": make_iron_ore, "diamond_ore": make_diamond_ore,
+        "crafting_table_top": make_crafting_table_top, "crafting_table_side": make_crafting_table_side,
     }
     paths = {}
     for name in TEXTURE_NAMES:
@@ -191,5 +267,22 @@ def build_individual_textures(seed=1337, out_dir="assets"):
     return paths
 
 
+def build_tool_icons(out_dir="assets"):
+    """Her (tier, tür) kombinasyonu için alet ikonu üretir: assets/icon_<tier>_<tur>.png"""
+    import os
+    os.makedirs(out_dir, exist_ok=True)
+    kinds = ["pickaxe", "axe", "sword"]
+    tiers = ["wood", "stone", "iron", "diamond"]
+    paths = {}
+    for tier in tiers:
+        for kind in kinds:
+            img = make_tool_icon(kind, tier)
+            path = os.path.join(out_dir, f"icon_{tier}_{kind}.png")
+            img.save(path)
+            paths[(kind, tier)] = path
+    return paths
+
+
 if __name__ == "__main__":
     build_individual_textures()
+    build_tool_icons()

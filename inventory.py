@@ -95,15 +95,21 @@ class Inventory:
           - Cursor dolu, slot aynı tip -> mümkün olduğunca birleştir
           - Cursor dolu, slot farklı tip -> takas et
         """
-        slot = self._get(index)
+        self.click_external(lambda: self._get(index), lambda v: self._set(index, v))
+
+    def click_external(self, get_fn, set_fn):
+        """click_slot ile aynı mantık ama envanterin KENDİ dizisi dışındaki
+        bir slotla çalışır (örn. crafting grid hücreleri) - get_fn/set_fn
+        üzerinden okunur/yazılır."""
+        slot = get_fn()
         if self.cursor is None:
             if slot is not None:
-                self._set(index, None)
+                set_fn(None)
                 self.cursor = slot
             return
 
         if slot is None:
-            self._set(index, self.cursor)
+            set_fn(self.cursor)
             self.cursor = None
         elif slot[0] == self.cursor[0]:
             cap = I.stack_max(slot[0])
@@ -113,8 +119,36 @@ class Inventory:
             if self.cursor[1] <= 0:
                 self.cursor = None
         else:
-            self._set(index, self.cursor)
+            set_fn(self.cursor)
             self.cursor = slot
+
+    def right_click_slot(self, index):
+        self.right_click_external(lambda: self._get(index), lambda v: self._set(index, v))
+
+    def right_click_external(self, get_fn, set_fn):
+        """
+        Sağ tık: TEK adet taşır (crafting grid'ine aynı malzemeden birden
+        fazla hücreye dağıtmak için gerekli - örn. kazmanın 3 ayrı tahta hücresi):
+          - Cursor boş, slot dolu  -> slottaki yığının YARISINI (yukarı yuvarlak) al
+          - Cursor dolu, slot boş ya da aynı tip (dolmamış) -> slota TEK adet bırak
+        """
+        slot = get_fn()
+        if self.cursor is None:
+            if slot is not None:
+                half = (slot[1] + 1) // 2
+                remaining = slot[1] - half
+                set_fn([slot[0], remaining] if remaining > 0 else None)
+                self.cursor = [slot[0], half]
+            return
+
+        if slot is None:
+            set_fn([self.cursor[0], 1])
+            self.cursor[1] -= 1
+        elif slot[0] == self.cursor[0] and slot[1] < I.stack_max(slot[0]):
+            slot[1] += 1
+            self.cursor[1] -= 1
+        if self.cursor is not None and self.cursor[1] <= 0:
+            self.cursor = None
 
     def drop_cursor_into_inventory(self):
         """Envanter kapatılırken elde tutulan stack varsa geri dağıt; sığmayan kaybolur."""
