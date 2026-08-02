@@ -90,7 +90,7 @@ def item_icon_color(game, item_id):
 
 class Game(pyglet.window.Window):
     def __init__(self):
-        super().__init__(width=WINDOW_W, height=WINDOW_H, caption="PyCraft",
+        super().__init__(width=WINDOW_W, height=WINDOW_H, caption="QubeCraft",
                           resizable=True, vsync=True)
         gl.glClearColor(0.53, 0.75, 0.92, 1.0)  # gökyüzü rengi
 
@@ -1054,7 +1054,7 @@ class Game(pyglet.window.Window):
         # gökyüzü zaten temizlenmiş arka plan; üstüne dekoratif bir zemin şeridi çiz
         self._rect("menu_ground", 0, 0, width, height // 3, (70, 130, 60)).draw()
 
-        self._label("menu_title", "PyCraft", font_size=52, x=cx, y=height - 90,
+        self._label("menu_title", "QubeCraft", font_size=52, x=cx, y=height - 90,
                     anchor_x="center", anchor_y="center", bold=True, color=(255, 255, 255, 255)).draw()
         self._label("menu_subtitle", "Python + OpenGL", font_size=13, x=cx, y=height - 130,
                     anchor_x="center", anchor_y="center", color=(230, 230, 230, 255)).draw()
